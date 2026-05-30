@@ -58,9 +58,10 @@ class UserRoleService {
 
       final role = await getUserRole();
       
-      // إذا كان المستخدم دكتور، تحقق من الصلاحية
+      // إذا كان المستخدم دكتور، يجب أن يكون حسابه موافقاً عليه قبل منحه الصلاحيات
       if (role == ROLE_DOCTOR) {
-        return doctorOnlyPermissions.contains(permission);
+        if (!doctorOnlyPermissions.contains(permission)) return false;
+        return isDoctorVerified();
       }
 
       return false;
@@ -163,7 +164,11 @@ class UserRoleService {
       if (user == null) return false;
 
       final doc = await _firestore.collection('users').doc(user.uid).get();
-      return doc.get('isVerified') as bool? ?? false;
+      if (!doc.exists) return false;
+
+      final data = doc.data() ?? {};
+      final status = (data['verificationStatus'] ?? data['doctorRequestStatus'] ?? data['accountStatus'] ?? '').toString().toLowerCase();
+      return data['isVerified'] == true && (status.isEmpty || status == 'approved');
     } catch (e) {
       print('❌ خطأ في التحقق من حالة الدكتور: $e');
       return false;
