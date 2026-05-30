@@ -242,6 +242,167 @@ class AdminService {
     }
   }
 
+
+  /// إلغاء تفعيل طبيب تمت الموافقة عليه سابقاً دون حذف بياناته.
+  static Future<void> deactivateDoctor(
+    String doctorId,
+    String adminId,
+    String adminName,
+    String reason,
+  ) async {
+    try {
+      final doctorDoc = await _firestore.collection('users').doc(doctorId).get();
+      if (!doctorDoc.exists) throw Exception('حساب الطبيب غير موجود');
+
+      final doctorData = doctorDoc.data() ?? {};
+      final doctorName = (doctorData['fullName'] ?? '').toString();
+      final batch = _firestore.batch();
+      final userRef = _firestore.collection('users').doc(doctorId);
+      final requestRef = _firestore.collection('doctor_requests').doc(doctorId);
+
+      batch.set(userRef, {
+        'isVerified': false,
+        'verificationStatus': 'rejected',
+        'doctorRequestStatus': 'rejected',
+        'accountStatus': 'Rejected',
+        'deactivatedAt': FieldValue.serverTimestamp(),
+        'deactivatedBy': adminId,
+        'rejectionReason': reason,
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+
+      batch.set(requestRef, {
+        ...doctorData,
+        'doctorId': doctorId,
+        'status': 'rejected',
+        'verificationStatus': 'rejected',
+        'doctorRequestStatus': 'rejected',
+        'accountStatus': 'Rejected',
+        'rejectionReason': reason,
+        'reviewedAt': FieldValue.serverTimestamp(),
+        'reviewedBy': adminId,
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+
+      await batch.commit();
+
+      await _firestore.collection('admin_logs').add({
+        'adminId': adminId,
+        'adminName': adminName,
+        'action': 'deactivate_doctor',
+        'doctorId': doctorId,
+        'doctorName': doctorName,
+        'reason': reason,
+        'timestamp': FieldValue.serverTimestamp(),
+      });
+    } catch (e) {
+      print('Error deactivating doctor: $e');
+      rethrow;
+    }
+  }
+
+  /// حذف الطبيب من Firestore. لا يحذف حساب Firebase Auth لأن ذلك يتطلب Admin SDK.
+  static Future<void> deleteDoctor(
+    String doctorId,
+    String adminId,
+    String adminName,
+  ) async {
+    try {
+      final doctorDoc = await _firestore.collection('users').doc(doctorId).get();
+      final doctorData = doctorDoc.data() ?? {};
+      final doctorName = (doctorData['fullName'] ?? '').toString();
+
+      final batch = _firestore.batch();
+      batch.delete(_firestore.collection('doctor_requests').doc(doctorId));
+      batch.delete(_firestore.collection('users').doc(doctorId));
+      await batch.commit();
+
+      await _firestore.collection('admin_logs').add({
+        'adminId': adminId,
+        'adminName': adminName,
+        'action': 'delete_doctor',
+        'doctorId': doctorId,
+        'doctorName': doctorName,
+        'timestamp': FieldValue.serverTimestamp(),
+      });
+    } catch (e) {
+      print('Error deleting doctor: $e');
+      rethrow;
+    }
+  }
+
+
+  /// إحصائيات مباشرة للواجهة الرئيسية حتى تتحدث الأرقام فور وصول/مراجعة الطلبات.
+  static Stream<AdminStats> watchAdminStats() {
+    return _firestore.collection('users').snapshots().asyncMap((usersSnapshot) async {
+      try {
+        var totalDoctors = 0;
+        var pendingRequests = 0;
+        var approvedDoctors = 0;
+        var rejectedRequests = 0;
+        var totalPatients = 0;
+        final specialtyUsage = <String, int>{};
+        var ratingSum = 0.0;
+        var ratedDoctors = 0;
+
+        for (final doc in usersSnapshot.docs) {
+          final data = doc.data();
+          final accountType = (data['accountType'] ?? '').toString();
+          if (accountType == 'patient') totalPatients++;
+          if (accountType != 'doctor') continue;
+
+          totalDoctors++;
+          final status = _doctorStatus(data);
+          if (status == 'approved') {
+            approvedDoctors++;
+          } else if (status == 'rejected') {
+            rejectedRequests++;
+          } else {
+            pendingRequests++;
+          }
+
+          final specialty = (data['specialtyName'] ?? data['specialty'] ?? 'غير محدد').toString();
+          specialtyUsage[specialty] = (specialtyUsage[specialty] ?? 0) + 1;
+          final rating = (data['rating'] as num?)?.toDouble() ?? 0;
+          if (rating > 0) {
+            ratingSum += rating;
+            ratedDoctors++;
+          }
+        }
+
+        final appointments = await _firestore.collection('appointments').count().get();
+        final consultations = await _firestore.collection('consultations').count().get();
+        final healthAssessments = await _firestore.collectionGroup('health_assessments').count().get();
+
+        return AdminStats(
+          totalDoctors: totalDoctors,
+          pendingRequests: pendingRequests,
+          approvedDoctors: approvedDoctors,
+          rejectedRequests: rejectedRequests,
+          totalPatients: totalPatients,
+          totalAppointments: appointments.count ?? 0,
+          averageDoctorRating: ratedDoctors == 0 ? 0 : ratingSum / ratedDoctors,
+          totalConsultations: consultations.count ?? 0,
+          totalHealthAssessments: healthAssessments.count ?? 0,
+          topSpecialties: _topEntries(specialtyUsage),
+          topDoctors: const {},
+        );
+      } catch (e) {
+        print('Error watching stats: $e');
+        return AdminStats(
+          totalDoctors: 0,
+          pendingRequests: 0,
+          approvedDoctors: 0,
+          rejectedRequests: 0,
+          totalPatients: 0,
+          totalAppointments: 0,
+          averageDoctorRating: 0,
+          totalConsultations: 0,
+        );
+      }
+    });
+  }
+
   /// جلب إحصائيات الإدارة من Firestore مع مؤشرات التقارير والتوصيات.
   static Future<AdminStats> getAdminStats() async {
     try {
@@ -255,21 +416,6 @@ class AdminService {
           .where('accountType', isEqualTo: 'patient')
           .count()
           .get();
-      final pending = await _firestore
-          .collection('doctor_requests')
-          .where('status', isEqualTo: 'pending')
-          .count()
-          .get();
-      final approved = await _firestore
-          .collection('doctor_requests')
-          .where('status', isEqualTo: 'approved')
-          .count()
-          .get();
-      final rejected = await _firestore
-          .collection('doctor_requests')
-          .where('status', isEqualTo: 'rejected')
-          .count()
-          .get();
       final appointments = await _firestore.collection('appointments').count().get();
       final consultations = await _firestore.collection('consultations').count().get();
       final healthAssessments = await _firestore.collectionGroup('health_assessments').count().get();
@@ -281,8 +427,20 @@ class AdminService {
       final specialtyUsage = <String, int>{};
       var ratingSum = 0.0;
       var ratedDoctors = 0;
+      var pendingRequests = 0;
+      var approvedDoctors = 0;
+      var rejectedRequests = 0;
       for (final doc in doctorSnapshot.docs) {
         final data = doc.data();
+        final status = _doctorStatus(data);
+        if (status == 'approved') {
+          approvedDoctors++;
+        } else if (status == 'rejected') {
+          rejectedRequests++;
+        } else {
+          pendingRequests++;
+        }
+
         final specialty = (data['specialtyName'] ?? data['specialty'] ?? 'غير محدد').toString();
         specialtyUsage[specialty] = (specialtyUsage[specialty] ?? 0) + 1;
         final rating = (data['rating'] as num?)?.toDouble() ?? 0;
@@ -305,9 +463,9 @@ class AdminService {
 
       return AdminStats(
         totalDoctors: doctors.count ?? 0,
-        pendingRequests: pending.count ?? 0,
-        approvedDoctors: approved.count ?? 0,
-        rejectedRequests: rejected.count ?? 0,
+        pendingRequests: pendingRequests,
+        approvedDoctors: approvedDoctors,
+        rejectedRequests: rejectedRequests,
         totalPatients: patients.count ?? 0,
         totalAppointments: appointments.count ?? 0,
         averageDoctorRating: ratedDoctors == 0 ? 0 : ratingSum / ratedDoctors,
@@ -329,6 +487,21 @@ class AdminService {
         totalConsultations: 0,
       );
     }
+  }
+
+
+  static String _doctorStatus(Map<String, dynamic> data) {
+    final rawStatus = (data['status'] ??
+            data['verificationStatus'] ??
+            data['doctorRequestStatus'] ??
+            data['accountStatus'] ??
+            (data['isVerified'] == true ? 'approved' : 'pending'))
+        .toString()
+        .trim()
+        .toLowerCase();
+    if (rawStatus == 'approved' || rawStatus == 'approve') return 'approved';
+    if (rawStatus == 'rejected' || rawStatus == 'reject') return 'rejected';
+    return 'pending';
   }
 
   static Map<String, int> _topEntries(Map<String, int> source, {int limit = 5}) {

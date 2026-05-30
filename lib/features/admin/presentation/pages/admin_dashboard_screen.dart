@@ -21,14 +21,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   static const Color _mutedTextColor = Color(0xFF667085);
   static const Color _borderColor = Color(0xFFE6ECF5);
 
-  late Future<AdminStats> _statsFuture;
   int _currentIndex = 0;
-
-  @override
-  void initState() {
-    super.initState();
-    _statsFuture = AdminService.getAdminStats();
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -128,8 +121,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   }
 
   Widget _buildDashboardContent(ThemeData theme) {
-    return FutureBuilder<AdminStats>(
-      future: _statsFuture,
+    return StreamBuilder<AdminStats>(
+      stream: AdminService.watchAdminStats(),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Center(child: CircularProgressIndicator());
@@ -145,11 +138,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                 const Text('حدث خطأ في تحميل البيانات', style: TextStyle(fontSize: 16)),
                 const SizedBox(height: 16),
                 ElevatedButton(
-                  onPressed: () {
-                    setState(() {
-                      _statsFuture = AdminService.getAdminStats();
-                    });
-                  },
+                  onPressed: () => setState(() {}),
                   child: const Text('إعادة المحاولة'),
                 ),
               ],
@@ -159,12 +148,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
 
         final stats = snapshot.data!;
         return RefreshIndicator(
-          onRefresh: () async {
-            setState(() {
-              _statsFuture = AdminService.getAdminStats();
-            });
-            await _statsFuture;
-          },
+          onRefresh: () async => setState(() {}),
           child: SingleChildScrollView(
             physics: const AlwaysScrollableScrollPhysics(),
             padding: const EdgeInsets.all(16),

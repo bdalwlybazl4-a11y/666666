@@ -103,7 +103,7 @@ class _DoctorRequestDetailsScreenState extends State<DoctorRequestDetailsScreen>
               ],
             ),
             const SizedBox(height: 16),
-            if (_request.status == 'pending') _buildActionButtons(),
+            _buildActionButtons(),
             if (_request.status != 'pending') _buildReviewInfo(),
           ],
         ),
@@ -342,25 +342,41 @@ class _DoctorRequestDetailsScreenState extends State<DoctorRequestDetailsScreen>
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        ElevatedButton.icon(
-          onPressed: _approveRequest,
-          icon: const Icon(Icons.verified_rounded),
-          label: const Text('الموافقة على الطلب'),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: const Color(0xFF2CB67D),
-            foregroundColor: Colors.white,
-            padding: const EdgeInsets.symmetric(vertical: 14),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        if (_request.status != 'approved') ...[
+          ElevatedButton.icon(
+            onPressed: _approveRequest,
+            icon: const Icon(Icons.verified_rounded),
+            label: const Text('الموافقة على الطلب'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF2CB67D),
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(vertical: 14),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            ),
           ),
-        ),
-        const SizedBox(height: 10),
+          const SizedBox(height: 10),
+        ],
+        if (_request.status != 'rejected') ...[
+          OutlinedButton.icon(
+            onPressed: _showRejectDialog,
+            icon: const Icon(Icons.close_rounded),
+            label: Text(_request.status == 'approved' ? 'إلغاء تفعيل الطبيب' : 'رفض الطلب'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: const Color(0xFFE63946),
+              side: const BorderSide(color: Color(0xFFE63946)),
+              padding: const EdgeInsets.symmetric(vertical: 14),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            ),
+          ),
+          const SizedBox(height: 10),
+        ],
         OutlinedButton.icon(
-          onPressed: _showRejectDialog,
-          icon: const Icon(Icons.close_rounded),
-          label: const Text('رفض الطلب'),
+          onPressed: _deleteDoctor,
+          icon: const Icon(Icons.delete_forever_rounded),
+          label: const Text('حذف الطبيب نهائياً'),
           style: OutlinedButton.styleFrom(
-            foregroundColor: const Color(0xFFE63946),
-            side: const BorderSide(color: Color(0xFFE63946)),
+            foregroundColor: Colors.red.shade900,
+            side: BorderSide(color: Colors.red.shade900),
             padding: const EdgeInsets.symmetric(vertical: 14),
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
           ),
@@ -458,12 +474,12 @@ class _DoctorRequestDetailsScreenState extends State<DoctorRequestDetailsScreen>
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('رفض الطلب'),
+        title: Text(_request.status == 'approved' ? 'إلغاء تفعيل الطبيب' : 'رفض الطلب'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('الرجاء إدخال سبب الرفض:'),
+            Text(_request.status == 'approved' ? 'الرجاء إدخال سبب إلغاء التفعيل:' : 'الرجاء إدخال سبب الرفض:'),
             const SizedBox(height: 12),
             TextField(
               controller: _rejectionReasonController,
@@ -485,7 +501,7 @@ class _DoctorRequestDetailsScreenState extends State<DoctorRequestDetailsScreen>
               Navigator.pop(context);
               _rejectRequest();
             },
-            child: const Text('رفض'),
+            child: Text(_request.status == 'approved' ? 'إلغاء التفعيل' : 'رفض'),
           ),
         ],
       ),
@@ -504,18 +520,26 @@ class _DoctorRequestDetailsScreenState extends State<DoctorRequestDetailsScreen>
       final adminName = adminDoc.data()?['fullName'] ?? 'مسؤول';
 
       final reason = _rejectionReasonController.text.trim();
-      await AdminService.rejectDoctorRequest(
-        _request.id,
-        admin.uid,
-        adminName,
-        reason,
-      );
+      final wasApproved = _request.status == 'approved';
+      if (wasApproved) {
+        await AdminService.deactivateDoctor(_request.doctorId, admin.uid, adminName, reason);
+      } else {
+        await AdminService.rejectDoctorRequest(
+          _request.id,
+          admin.uid,
+          adminName,
+          reason,
+        );
+      }
       _request = _request.copyWith(status: 'rejected', reviewedBy: admin.uid, reviewedAt: DateTime.now(), rejectionReason: reason);
 
       if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('تم رفض الطلب بنجاح'), backgroundColor: Color(0xFFE63946)),
+        SnackBar(
+          content: Text(wasApproved ? 'تم إلغاء تفعيل الطبيب بنجاح' : 'تم رفض الطلب بنجاح'),
+          backgroundColor: const Color(0xFFE63946),
+        ),
       );
 
       _rejectionReasonController.clear();
@@ -534,6 +558,48 @@ class _DoctorRequestDetailsScreenState extends State<DoctorRequestDetailsScreen>
       }
     }
   }
+
+  Future<void> _deleteDoctor() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('حذف الطبيب'),
+        content: const Text('سيتم حذف بيانات الطبيب وطلبه من قاعدة البيانات. هل أنت متأكد؟'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('إلغاء')),
+          TextButton(onPressed: () => Navigator.pop(context, true), child: const Text('حذف')),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    setState(() => _isLoading = true);
+
+    try {
+      final admin = FirebaseAuth.instance.currentUser;
+      if (admin == null) throw Exception('لم يتم العثور على المسؤول');
+
+      final adminDoc = await FirebaseFirestore.instance.collection('admins').doc(admin.uid).get();
+      final adminName = adminDoc.data()?['fullName'] ?? 'مسؤول';
+
+      await AdminService.deleteDoctor(_request.doctorId, admin.uid, adminName);
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('تم حذف الطبيب بنجاح'), backgroundColor: Color(0xFFE63946)),
+      );
+      Navigator.pop(context);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('حدث خطأ: $e')));
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
 }
 
 class _StatusMeta {
