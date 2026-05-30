@@ -204,7 +204,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       return downloadUrl;
     } catch (e) {
       _handleError('profile-upload-error', e);
-      return null;
+      rethrow;
     } finally {
       if (mounted) {
         setState(() => _isProfileUploading = false);
@@ -706,6 +706,15 @@ class _RegisterScreenState extends State<RegisterScreen> {
     }
 
     if (_selectedAccountType == 'doctor') {
+      if (_profileImage == null && (_photoURL == null || _photoURL!.isEmpty)) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('يجب إضافة صورة شخصية للأطباء')),
+          );
+        }
+        return;
+      }
+
       if (_licenseDocument == null) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
