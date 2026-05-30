@@ -9,6 +9,7 @@ import '../../../../core/config/medical_theme.dart';
 import '../../../../core/config/theme_helper.dart';
 //import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 
 class Workplace {
   final String name;
@@ -178,11 +179,18 @@ class _RegisterScreenState extends State<RegisterScreen> {
     setState(() => _isProfileUploading = true);
 
     try {
-      final String filePath = 'profile_images/$userId/${_profileImage!.name}';
-      final Reference storageRef = FirebaseStorage.instance.ref().child(filePath);
-      final File file = File(_profileImage!.path!);
-
-      final UploadTask uploadTask = storageRef.putFile(file);
+      final storageRef = _doctorStorageRef(
+        userId: userId,
+        folder: 'profile_images',
+        fileName: _profileImage!.name,
+      );
+      final UploadTask uploadTask = await _uploadPlatformFile(
+        storageRef,
+        _profileImage!,
+        contentType: _profileImage!.extension != null
+            ? 'image/${_profileImage!.extension!.toLowerCase() == 'jpg' ? 'jpeg' : _profileImage!.extension!.toLowerCase()}'
+            : null,
+      );
       final TaskSnapshot snapshot = await uploadTask;
       final String downloadUrl = await snapshot.ref.getDownloadURL();
 
@@ -195,7 +203,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       return downloadUrl;
     } catch (e) {
       _handleError('profile-upload-error', e);
-      return null;
+      rethrow;
     } finally {
       if (mounted) {
         setState(() => _isProfileUploading = false);
@@ -323,13 +331,23 @@ class _RegisterScreenState extends State<RegisterScreen> {
         errorMessage = 'خطأ في تسجيل آبل: ${error.message}';
         break;
       case 'firestore-error':
-        errorMessage = 'خطأ في حفظ البيانات: ${error.message}';
+        errorMessage = error is FirebaseException
+            ? 'خطأ في حفظ البيانات: ${error.message ?? error.code}'
+            : 'خطأ في حفظ البيانات: ${error.toString()}';
         break;
       case 'storage-error':
-        errorMessage = 'خطأ في رفع الملف: ${error.message}';
+        errorMessage = error is FirebaseException
+            ? 'خطأ في رفع الملف: ${error.message ?? error.code}'
+            : 'خطأ في رفع الملف: ${error.toString()}';
         break;
       case 'profile-upload-error':
         errorMessage = 'خطأ في رفع الصورة الشخصية: ${error.toString()}';
+        break;
+      case 'file-picker-error':
+        errorMessage = 'تعذر اختيار الملف. حاول مرة أخرى أو اختر ملفاً آخر.';
+        break;
+      case 'request-error':
+        errorMessage = 'تم إنشاء الحساب لكن تعذر إرسال طلب التفعيل: ${error.toString()}';
         break;
       case 'workplace-error':
         errorMessage = 'خطأ في إدارة أماكن العمل: ${error.toString()}';
@@ -400,34 +418,32 @@ class _RegisterScreenState extends State<RegisterScreen> {
     }
   }
 
-  Future<void> _uploadLicenseDocument(String userId) async {
-    if (_licenseDocument == null) return;
+  Future<String?> _uploadLicenseDocument(String userId) async {
+    if (_licenseDocument == null) return null;
 
-    setState(() => _isUploading = true);
+    if (mounted) setState(() => _isUploading = true);
 
     try {
-      final String filePath = 'license_docs/$userId/${_licenseDocument!.name}';
-      final Reference storageRef = FirebaseStorage.instance.ref().child(filePath);
-      final File file = File(_licenseDocument!.path!);
-
-      final UploadTask uploadTask = storageRef.putFile(file);
+      final storageRef = _doctorStorageRef(
+        userId: userId,
+        folder: 'license_docs',
+        fileName: _licenseDocument!.name,
+      );
+      final UploadTask uploadTask = await _uploadPlatformFile(
+        storageRef,
+        _licenseDocument!,
+        contentType: _contentTypeForExtension(_licenseDocument!.extension),
+      );
       final TaskSnapshot snapshot = await uploadTask;
       final String downloadUrl = await snapshot.ref.getDownloadURL();
-
-      await FirebaseFirestore.instance
-          .collection('users')
-          .doc(userId)
-          .update({
-        'licenseDocumentUrl': downloadUrl,
-        'hasLicenseDocuments': true,
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('تم رفع وثيقة الترخيص بنجاح')),
         );
       }
+
+      return downloadUrl;
     } catch (e) {
       _handleError('storage-error', e);
       rethrow;
@@ -438,17 +454,71 @@ class _RegisterScreenState extends State<RegisterScreen> {
     }
   }
 
-  Future<void> _saveUserDataToFirestore(String uid, String fullName, String? email) async {
+  Reference _doctorStorageRef({
+    required String userId,
+    required String folder,
+    required String fileName,
+  }) {
+    final safeName = fileName.replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_');
+    final timestamp = DateTime.now().millisecondsSinceEpoch;
+    return FirebaseStorage.instance.ref().child('doctor_verification/$userId/$folder/${timestamp}_$safeName');
+  }
+
+  Future<UploadTask> _uploadPlatformFile(
+    Reference storageRef,
+    PlatformFile file, {
+    String? contentType,
+  }) async {
+    final metadata = SettableMetadata(contentType: contentType);
+
+    if (file.path != null && !kIsWeb) {
+      return storageRef.putFile(File(file.path!), metadata);
+    }
+
+    if (file.bytes != null) {
+      return storageRef.putData(file.bytes!, metadata);
+    }
+
+    throw Exception('تعذر قراءة الملف المختار. يرجى اختيار الملف مرة أخرى.');
+  }
+
+  String? _contentTypeForExtension(String? extension) {
+    switch (extension?.toLowerCase()) {
+      case 'pdf':
+        return 'application/pdf';
+      case 'jpg':
+      case 'jpeg':
+        return 'image/jpeg';
+      case 'png':
+        return 'image/png';
+      default:
+        return null;
+    }
+  }
+
+  Future<void> _saveUserDataToFirestore(
+    String uid,
+    String fullName,
+    String? email, {
+    String? licenseDocumentUrl,
+  }) async {
     if (!mounted) return;
 
     try {
-      final bool isVerified = _selectedAccountType == 'patient';
+      final bool isDoctor = _selectedAccountType == 'doctor';
+      final bool isVerified = !isDoctor;
+      final phoneNumber = _phoneController.text.trim();
+      final specialty = _specialtyController.text.trim();
+      final qualification = _specialtyNameController.text.trim();
+      final licenseNumber = _licenseNumberController.text.trim();
+      final workplaces = _workplaces.map((wp) => wp.toMap()).toList();
 
       Map<String, dynamic> userData = {
         'uid': uid,
         'fullName': fullName,
         'email': email,
-        'phone': _phoneController.text.trim(),
+        'phone': phoneNumber,
+        'phoneNumber': phoneNumber,
         'gender': _selectedGender,
         'accountType': _selectedAccountType,
         'isVerified': isVerified,
@@ -459,33 +529,79 @@ class _RegisterScreenState extends State<RegisterScreen> {
         'ai_test_completed': false,
       };
 
-      if (_selectedAccountType == 'doctor') {
+      if (isDoctor) {
         userData.addAll({
-          'specialtyName': _specialtyController.text.trim(),
-          'specialty': _specialtyNameController.text.trim(),
-          'licenseNumber': _licenseNumberController.text.trim(),
-          'workplaces': _workplaces.map((wp) => wp.toMap()).toList(),
+          'specialtyName': specialty,
+          'specialty': specialty,
+          'qualification': qualification,
+          'medicalDegree': qualification,
+          'licenseNumber': licenseNumber,
+          'medicalLicense': licenseDocumentUrl ?? '',
+          'licenseDocumentUrl': licenseDocumentUrl ?? '',
           'licenseDocument': _licenseDocument?.name ?? '',
-          'hasLicenseDocuments': _licenseDocument != null,
+          'documentUrls': licenseDocumentUrl == null ? <String>[] : <String>[licenseDocumentUrl],
+          'workplaces': workplaces,
+          'clinicName': _workplaces.isNotEmpty ? _workplaces.first.name : '',
+          'hasLicenseDocuments': licenseDocumentUrl != null && licenseDocumentUrl.isNotEmpty,
           'verificationStatus': 'pending',
+          'accountStatus': 'Pending',
+          'doctorRequestStatus': 'pending',
+          'doctorRequestId': uid,
         });
       }
 
-      await FirebaseFirestore.instance
-          .collection('users')
-          .doc(uid)
-          .set(userData, SetOptions(merge: true));
+      final batch = FirebaseFirestore.instance.batch();
+      final userRef = FirebaseFirestore.instance.collection('users').doc(uid);
+      batch.set(userRef, userData, SetOptions(merge: true));
+
+      if (isDoctor) {
+        final requestRef = FirebaseFirestore.instance.collection('doctor_requests').doc(uid);
+        batch.set(requestRef, {
+          'doctorId': uid,
+          'fullName': fullName,
+          'email': email ?? '',
+          'phone': phoneNumber,
+          'phoneNumber': phoneNumber,
+          'specialty': specialty,
+          'specialtyName': specialty,
+          'qualification': qualification,
+          'medicalDegree': qualification,
+          'medicalLicense': licenseDocumentUrl ?? '',
+          'licenseDocumentUrl': licenseDocumentUrl ?? '',
+          'licenseNumber': licenseNumber,
+          'clinicName': _workplaces.isNotEmpty ? _workplaces.first.name : '',
+          'clinicAddress': '',
+          'workplaces': workplaces,
+          'profileImageUrl': _photoURL ?? '',
+          'photoURL': _photoURL ?? '',
+          'documentUrls': licenseDocumentUrl == null ? <String>[] : <String>[licenseDocumentUrl],
+          'status': 'pending',
+          'accountStatus': 'Pending',
+          'rejectionReason': '',
+          'reviewedAt': null,
+          'reviewedBy': '',
+          'rating': 0,
+          'reviewCount': 0,
+          'bio': '',
+          'specialties': specialty.isEmpty ? <String>[] : <String>[specialty],
+          'yearsOfExperience': '0',
+          'createdAt': FieldValue.serverTimestamp(),
+          'updatedAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
+      }
+
+      await batch.commit();
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('تم حفظ البيانات بنجاح')),
+          const SnackBar(content: Text('تم حفظ البيانات وإرسال طلب التفعيل بنجاح')),
         );
       }
     } on FirebaseException catch (e) {
       _handleError('firestore-error', e);
       rethrow;
     } catch (e) {
-      _handleError('firestore-general-error', e);
+      _handleError('request-error', e);
       rethrow;
     }
   }
@@ -581,6 +697,15 @@ class _RegisterScreenState extends State<RegisterScreen> {
     }
 
     if (_selectedAccountType == 'doctor') {
+      if (_profileImage == null && (_photoURL == null || _photoURL!.isEmpty)) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('يجب إضافة صورة شخصية للأطباء')),
+          );
+        }
+        return;
+      }
+
       if (_licenseDocument == null) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -613,17 +738,19 @@ class _RegisterScreenState extends State<RegisterScreen> {
         _photoURL = await _uploadProfileImage(userCredential.user!.uid);
       }
 
+      String? licenseDocumentUrl;
+      if (_selectedAccountType == 'doctor' && _licenseDocument != null) {
+        licenseDocumentUrl = await _uploadLicenseDocument(userCredential.user!.uid);
+      }
+
       await _saveDataLocally();
 
       await _saveUserDataToFirestore(
         userCredential.user!.uid,
         _nameController.text.trim(),
         _emailController.text.trim(),
+        licenseDocumentUrl: licenseDocumentUrl,
       );
-
-      if (_selectedAccountType == 'doctor' && _licenseDocument != null) {
-        await _uploadLicenseDocument(userCredential.user!.uid);
-      }
 
       if (!mounted) return;
 
