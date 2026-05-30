@@ -151,6 +151,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       FilePickerResult? result = await FilePicker.platform.pickFiles(
         type: FileType.image,
         allowMultiple: false,
+        withData: true,
       );
 
       if (result != null) {
@@ -369,6 +370,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       FilePickerResult? result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
         allowedExtensions: ['pdf', 'jpg', 'jpeg', 'png'],
+        withData: kIsWeb,
       );
 
       if (result != null) {
@@ -789,6 +791,25 @@ class _RegisterScreenState extends State<RegisterScreen> {
     }
   }
 
+
+  ImageProvider? _selectedProfileImageProvider() {
+    final selectedImage = _profileImage;
+    if (selectedImage != null) {
+      if (selectedImage.bytes != null) {
+        return MemoryImage(selectedImage.bytes!);
+      }
+      if (selectedImage.path != null && selectedImage.path!.isNotEmpty && !kIsWeb) {
+        return FileImage(File(selectedImage.path!));
+      }
+    }
+
+    if (_photoURL != null && _photoURL!.isNotEmpty) {
+      return NetworkImage(_photoURL!);
+    }
+
+    return const AssetImage('assets/images/default_profile.png');
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -810,13 +831,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       children: [
                         CircleAvatar(
                           radius: 50,
-                          backgroundImage: _profileImage != null
-                              ? FileImage(File(_profileImage!.path!))
-                              : _photoURL != null
-                              ? NetworkImage(_photoURL!)
-                              : const AssetImage('assets/images/default_profile.png')
-                          as ImageProvider,
-                          child: _profileImage == null && _photoURL == null
+                          backgroundImage: _selectedProfileImageProvider(),
+                          child: _selectedProfileImageProvider() == null
                               ? const Icon(Icons.person, size: 50)
                               : null,
                         ),
