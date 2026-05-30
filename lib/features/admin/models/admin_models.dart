@@ -36,7 +36,7 @@ class AdminUser {
       password: '', // لا نخزن كلمة المرور
       fullName: data['fullName'] ?? '',
       role: data['role'] ?? 'admin',
-      phoneNumber: data['phoneNumber'] ?? '',
+      phoneNumber: data['phoneNumber'] ?? data['phone'] ?? '',
       profileImage: data['profileImage'] ?? '',
       isActive: data['isActive'] ?? true,
       createdAt: (data['createdAt'] as Timestamp).toDate(),
@@ -70,6 +70,7 @@ class DoctorRequest {
   final String specialty;
   final String medicalLicense; // رابط الملف
   final String medicalDegree; // شهادة التخرج
+  final String profileImageUrl; // الصورة الشخصية
   final String clinicName;
   final String clinicAddress;
   final List<String> documentUrls; // الوثائق الإضافية
@@ -93,6 +94,7 @@ class DoctorRequest {
     required this.specialty,
     required this.medicalLicense,
     required this.medicalDegree,
+    required this.profileImageUrl,
     required this.clinicName,
     required this.clinicAddress,
     required this.documentUrls,
@@ -108,6 +110,20 @@ class DoctorRequest {
     required this.yearsOfExperience,
   });
 
+
+  static String _normalizeStatus(dynamic status) {
+    final value = (status ?? 'pending').toString().trim().toLowerCase();
+    if (value == 'approved' || value == 'approve') return 'approved';
+    if (value == 'rejected' || value == 'reject') return 'rejected';
+    return 'pending';
+  }
+
+  static DateTime _timestampToDate(dynamic value) {
+    if (value is Timestamp) return value.toDate();
+    if (value is DateTime) return value;
+    return DateTime.now();
+  }
+
   factory DoctorRequest.fromFirestore(DocumentSnapshot doc) {
     final data = doc.data() as Map<String, dynamic>;
     return DoctorRequest(
@@ -115,19 +131,20 @@ class DoctorRequest {
       doctorId: data['doctorId'] ?? '',
       fullName: data['fullName'] ?? '',
       email: data['email'] ?? '',
-      phoneNumber: data['phoneNumber'] ?? '',
-      specialty: data['specialty'] ?? '',
-      medicalLicense: data['medicalLicense'] ?? '',
-      medicalDegree: data['medicalDegree'] ?? '',
+      phoneNumber: data['phoneNumber'] ?? data['phone'] ?? '',
+      specialty: data['specialty'] ?? data['specialtyName'] ?? '',
+      medicalLicense: data['medicalLicense'] ?? data['licenseDocumentUrl'] ?? '',
+      medicalDegree: data['medicalDegree'] ?? data['qualification'] ?? '',
+      profileImageUrl: data['profileImageUrl'] ?? data['photoURL'] ?? '',
       clinicName: data['clinicName'] ?? '',
       clinicAddress: data['clinicAddress'] ?? '',
       documentUrls: List<String>.from(data['documentUrls'] ?? []),
-      status: data['status'] ?? 'pending',
+      status: _normalizeStatus(data['status'] ?? data['verificationStatus'] ?? data['accountStatus'] ?? 'pending'),
       rejectionReason: data['rejectionReason'] ?? '',
-      createdAt: (data['createdAt'] as Timestamp).toDate(),
+      createdAt: _timestampToDate(data['createdAt']),
       reviewedAt: data['reviewedAt'] != null
-          ? (data['reviewedAt'] as Timestamp).toDate()
-          : DateTime.now(),
+          ? _timestampToDate(data['reviewedAt'])
+          : DateTime.fromMillisecondsSinceEpoch(0),
       reviewedBy: data['reviewedBy'] ?? '',
       rating: (data['rating'] ?? 0).toDouble(),
       reviewCount: data['reviewCount'] ?? 0,
@@ -145,7 +162,9 @@ class DoctorRequest {
       'phoneNumber': phoneNumber,
       'specialty': specialty,
       'medicalLicense': medicalLicense,
+      'licenseDocumentUrl': medicalLicense,
       'medicalDegree': medicalDegree,
+      'profileImageUrl': profileImageUrl,
       'clinicName': clinicName,
       'clinicAddress': clinicAddress,
       'documentUrls': documentUrls,
@@ -171,6 +190,7 @@ class DoctorRequest {
     String? specialty,
     String? medicalLicense,
     String? medicalDegree,
+    String? profileImageUrl,
     String? clinicName,
     String? clinicAddress,
     List<String>? documentUrls,
@@ -194,6 +214,7 @@ class DoctorRequest {
       specialty: specialty ?? this.specialty,
       medicalLicense: medicalLicense ?? this.medicalLicense,
       medicalDegree: medicalDegree ?? this.medicalDegree,
+      profileImageUrl: profileImageUrl ?? this.profileImageUrl,
       clinicName: clinicName ?? this.clinicName,
       clinicAddress: clinicAddress ?? this.clinicAddress,
       documentUrls: documentUrls ?? this.documentUrls,

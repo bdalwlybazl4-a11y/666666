@@ -3,6 +3,7 @@ import 'package:digl/features/admin/models/admin_models.dart';
 import 'package:digl/features/admin/services/admin_service.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class DoctorRequestDetailsScreen extends StatefulWidget {
   final DoctorRequest request;
@@ -52,9 +53,15 @@ class _DoctorRequestDetailsScreenState extends State<DoctorRequestDetailsScreen>
               title: 'البيانات الشخصية',
               icon: Icons.person_rounded,
               children: [
+                if (_request.profileImageUrl.isNotEmpty) ...[
+                  _buildImagePreview('الصورة الشخصية', _request.profileImageUrl),
+                  const SizedBox(height: 10),
+                ],
                 _buildInfoRow('الاسم الكامل', _request.fullName),
                 _buildInfoRow('البريد الإلكتروني', _request.email),
                 _buildInfoRow('رقم الهاتف', _request.phoneNumber),
+                _buildInfoRow('تاريخ إنشاء الطلب', _formatDate(_request.createdAt)),
+                _buildInfoRow('حالة الحساب', _statusMeta(_request.status).label),
               ],
             ),
             const SizedBox(height: 16),
@@ -63,6 +70,8 @@ class _DoctorRequestDetailsScreenState extends State<DoctorRequestDetailsScreen>
               icon: Icons.badge_rounded,
               children: [
                 _buildInfoRow('التخصص', _request.specialty),
+                if (_request.medicalDegree.isNotEmpty && !_looksLikeUrl(_request.medicalDegree))
+                  _buildInfoRow('المؤهل العلمي', _request.medicalDegree),
                 _buildInfoRow('سنوات الخبرة', _request.yearsOfExperience),
                 _buildInfoRow('اسم العيادة', _request.clinicName),
                 _buildInfoRow('عنوان العيادة', _request.clinicAddress),
@@ -80,12 +89,17 @@ class _DoctorRequestDetailsScreenState extends State<DoctorRequestDetailsScreen>
               icon: Icons.description_rounded,
               children: [
                 if (_request.medicalLicense.isNotEmpty)
-                  _buildDocumentItem('رخصة الممارسة الطبية', _request.medicalLicense),
-                if (_request.medicalDegree.isNotEmpty)
+                  _buildDocumentItem('وثيقة إثبات المهنة', _request.medicalLicense),
+                if (_request.medicalDegree.isNotEmpty && _looksLikeUrl(_request.medicalDegree))
                   _buildDocumentItem('شهادة التخرج', _request.medicalDegree),
-                ..._request.documentUrls.asMap().entries.map(
-                      (entry) => _buildDocumentItem('وثيقة إضافية ${entry.key + 1}', entry.value),
-                ),
+                ..._request.documentUrls
+                    .where((url) => url.isNotEmpty && url != _request.medicalLicense)
+                    .toList()
+                    .asMap()
+                    .entries
+                    .map((entry) => _buildDocumentItem('وثيقة إضافية ${entry.key + 1}', entry.value)),
+                if (_request.medicalLicense.isEmpty && _request.medicalDegree.isEmpty && _request.documentUrls.isEmpty)
+                  Text('لا توجد روابط وثائق محفوظة لهذا الطلب.', style: TextStyle(color: Colors.grey.shade700)),
               ],
             ),
             const SizedBox(height: 16),
@@ -184,6 +198,7 @@ class _DoctorRequestDetailsScreenState extends State<DoctorRequestDetailsScreen>
   }
 
   Widget _buildDocumentItem(String title, String url) {
+    final isImage = _isImageUrl(url);
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -194,7 +209,7 @@ class _DoctorRequestDetailsScreenState extends State<DoctorRequestDetailsScreen>
       ),
       child: Row(
         children: [
-          const Icon(Icons.insert_drive_file_rounded, color: Color(0xFF3A86FF)),
+          Icon(isImage ? Icons.image_rounded : Icons.insert_drive_file_rounded, color: const Color(0xFF3A86FF)),
           const SizedBox(width: 10),
           Expanded(
             child: Column(
@@ -207,16 +222,96 @@ class _DoctorRequestDetailsScreenState extends State<DoctorRequestDetailsScreen>
             ),
           ),
           IconButton(
+            tooltip: 'فتح بالحجم الكامل',
             icon: const Icon(Icons.open_in_new_rounded, color: Color(0xFF3A86FF)),
-            onPressed: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('سيتم فتح الملف قريباً...')),
-              );
-            },
+            onPressed: () => _openAttachment(title, url),
           ),
         ],
       ),
     );
+  }
+
+  Widget _buildImagePreview(String title, String url) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(14),
+      onTap: () => _openAttachment(title, url),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(14),
+        child: AspectRatio(
+          aspectRatio: 16 / 9,
+          child: Image.network(
+            url,
+            fit: BoxFit.cover,
+            errorBuilder: (_, __, ___) => Container(
+              color: const Color(0xFFEAF1FF),
+              alignment: Alignment.center,
+              child: const Text('تعذر تحميل الصورة الشخصية'),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  bool _looksLikeUrl(String value) => value.startsWith('http://') || value.startsWith('https://');
+
+  bool _isImageUrl(String url) {
+    final lower = Uri.decodeFull(url).toLowerCase();
+    return lower.contains('.jpg') || lower.contains('.jpeg') || lower.contains('.png') || lower.contains('image%2f');
+  }
+
+  Future<void> _openAttachment(String title, String url) async {
+    if (url.isEmpty) return;
+
+    if (_isImageUrl(url)) {
+      await showDialog<void>(
+        context: context,
+        builder: (context) => Dialog(
+          insetPadding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              AppBar(
+                title: Text(title),
+                automaticallyImplyLeading: false,
+                actions: [
+                  IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                ],
+              ),
+              Flexible(
+                child: InteractiveViewer(
+                  child: Image.network(
+                    url,
+                    fit: BoxFit.contain,
+                    errorBuilder: (_, __, ___) => const Padding(
+                      padding: EdgeInsets.all(24),
+                      child: Text('تعذر تحميل الصورة'),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+      return;
+    }
+
+    final uri = Uri.tryParse(url);
+    if (uri == null || !await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('تعذر فتح الوثيقة. تحقق من الرابط أو صلاحيات الوصول.')),
+      );
+    }
+  }
+
+  String _formatDate(DateTime date) {
+    if (date.millisecondsSinceEpoch == 0) return 'غير محدد';
+    return '${date.day}/${date.month}/${date.year} - ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
   }
 
   Widget _buildInfoRow(String label, String value) {
@@ -336,6 +431,7 @@ class _DoctorRequestDetailsScreenState extends State<DoctorRequestDetailsScreen>
       final adminName = adminDoc.data()?['fullName'] ?? 'مسؤول';
 
       await AdminService.approveDoctorRequest(_request.id, admin.uid, adminName);
+      _request = _request.copyWith(status: 'approved', reviewedBy: admin.uid, reviewedAt: DateTime.now(), rejectionReason: '');
 
       if (!mounted) return;
 
@@ -407,12 +503,14 @@ class _DoctorRequestDetailsScreenState extends State<DoctorRequestDetailsScreen>
 
       final adminName = adminDoc.data()?['fullName'] ?? 'مسؤول';
 
+      final reason = _rejectionReasonController.text.trim();
       await AdminService.rejectDoctorRequest(
         _request.id,
         admin.uid,
         adminName,
-        _rejectionReasonController.text,
+        reason,
       );
+      _request = _request.copyWith(status: 'rejected', reviewedBy: admin.uid, reviewedAt: DateTime.now(), rejectionReason: reason);
 
       if (!mounted) return;
 

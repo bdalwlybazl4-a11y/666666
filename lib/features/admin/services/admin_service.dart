@@ -38,6 +38,25 @@ class AdminService {
     await _auth.signOut();
   }
 
+
+  /// مراقبة طلبات الأطباء بشكل مباشر لتظهر في لوحة الأدمن فور إنشائها.
+  static Stream<List<DoctorRequest>> watchDoctorRequests({String? status}) {
+    Query query = _firestore.collection('doctor_requests');
+
+    if (status != null && status != 'all') {
+      query = query.where('status', isEqualTo: status);
+    }
+
+    return query.snapshots().map((snapshot) {
+      final requests = snapshot.docs
+          .map((doc) => DoctorRequest.fromFirestore(doc))
+          .where((request) => status == null || status == 'all' || request.status == status)
+          .toList();
+      requests.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      return requests;
+    });
+  }
+
   /// جلب جميع طلبات الأطباء المعلقة
   static Future<List<DoctorRequest>> getPendingDoctorRequests() async {
     try {
@@ -115,20 +134,34 @@ class AdminService {
 
       final request = DoctorRequest.fromFirestore(requestDoc);
 
+      final batch = _firestore.batch();
+
       /// تحديث حالة الطلب (آمن)
-      await requestRef.set({
+      batch.set(requestRef, {
         'status': 'approved',
+        'accountStatus': 'Approved',
         'reviewedAt': FieldValue.serverTimestamp(),
         'reviewedBy': adminId,
+        'rejectionReason': '',
+        'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
 
-      /// تحديث حساب الطبيب (آمن حتى لو لم يكن موجود)
-      await _firestore.collection('users').doc(request.doctorId).set({
+      /// تحديث حساب الطبيب والسماح له باستخدام صلاحيات الطبيب.
+      batch.set(_firestore.collection('users').doc(request.doctorId), {
         'isVerified': true,
+        'verificationStatus': 'approved',
+        'doctorRequestStatus': 'approved',
+        'accountStatus': 'Approved',
         'hasLicenseDocuments': true,
         'approvedAt': FieldValue.serverTimestamp(),
         'approvedBy': adminId,
+        'rejectedAt': null,
+        'rejectedBy': null,
+        'rejectionReason': '',
+        'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
+
+      await batch.commit();
 
       /// تسجيل في السجل
       await _firestore.collection('admin_logs').add({
@@ -164,12 +197,29 @@ class AdminService {
 
       final request = DoctorRequest.fromFirestore(requestDoc);
 
-      await requestRef.set({
+      final batch = _firestore.batch();
+      batch.set(requestRef, {
         'status': 'rejected',
+        'accountStatus': 'Rejected',
         'rejectionReason': rejectionReason,
         'reviewedAt': FieldValue.serverTimestamp(),
         'reviewedBy': adminId,
+        'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
+
+      batch.set(_firestore.collection('users').doc(request.doctorId), {
+        'isVerified': false,
+        'verificationStatus': 'rejected',
+        'doctorRequestStatus': 'rejected',
+        'accountStatus': 'Rejected',
+        'hasLicenseDocuments': false,
+        'rejectedAt': FieldValue.serverTimestamp(),
+        'rejectedBy': adminId,
+        'rejectionReason': rejectionReason,
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+
+      await batch.commit();
 
       await _firestore.collection('admin_logs').add({
         'adminId': adminId,
