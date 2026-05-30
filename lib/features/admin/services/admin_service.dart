@@ -39,15 +39,14 @@ class AdminService {
   }
 
 
-  /// مراقبة طلبات الأطباء بشكل مباشر لتظهر في لوحة الأدمن فور إنشائها.
+  /// مراقبة حسابات الأطباء بشكل مباشر لتظهر طلبات التفعيل حتى إذا لم يتم إنشاء
+  /// مستند مستقل داخل doctor_requests بسبب قواعد Firestore القديمة.
   static Stream<List<DoctorRequest>> watchDoctorRequests({String? status}) {
-    Query query = _firestore.collection('doctor_requests');
-
-    if (status != null && status != 'all') {
-      query = query.where('status', isEqualTo: status);
-    }
-
-    return query.snapshots().map((snapshot) {
+    return _firestore
+        .collection('users')
+        .where('accountType', isEqualTo: 'doctor')
+        .snapshots()
+        .map((snapshot) {
       final requests = snapshot.docs
           .map((doc) => DoctorRequest.fromFirestore(doc))
           .where((request) => status == null || status == 'all' || request.status == status)
@@ -127,7 +126,10 @@ class AdminService {
       final requestRef =
       _firestore.collection('doctor_requests').doc(requestId);
 
-      final requestDoc = await requestRef.get();
+      var requestDoc = await requestRef.get();
+      if (!requestDoc.exists) {
+        requestDoc = await _firestore.collection('users').doc(requestId).get();
+      }
       if (!requestDoc.exists) {
         throw Exception('الطلب غير موجود');
       }
@@ -190,7 +192,10 @@ class AdminService {
       final requestRef =
       _firestore.collection('doctor_requests').doc(requestId);
 
-      final requestDoc = await requestRef.get();
+      var requestDoc = await requestRef.get();
+      if (!requestDoc.exists) {
+        requestDoc = await _firestore.collection('users').doc(requestId).get();
+      }
       if (!requestDoc.exists) {
         throw Exception('الطلب غير موجود');
       }

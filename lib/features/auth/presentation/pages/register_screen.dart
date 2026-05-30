@@ -370,7 +370,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       FilePickerResult? result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
         allowedExtensions: ['pdf', 'jpg', 'jpeg', 'png'],
-        withData: kIsWeb,
+        withData: true,
       );
 
       if (result != null) {
@@ -473,12 +473,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
   }) async {
     final metadata = SettableMetadata(contentType: contentType);
 
-    if (file.path != null && !kIsWeb) {
-      return storageRef.putFile(File(file.path!), metadata);
-    }
-
     if (file.bytes != null) {
       return storageRef.putData(file.bytes!, metadata);
+    }
+
+    if (file.path != null && file.path!.isNotEmpty && !kIsWeb) {
+      return storageRef.putFile(File(file.path!), metadata);
     }
 
     throw Exception('تعذر قراءة الملف المختار. يرجى اختيار الملف مرة أخرى.');
@@ -552,13 +552,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
         });
       }
 
-      final batch = FirebaseFirestore.instance.batch();
       final userRef = FirebaseFirestore.instance.collection('users').doc(uid);
-      batch.set(userRef, userData, SetOptions(merge: true));
+      await userRef.set(userData, SetOptions(merge: true));
 
       if (isDoctor) {
-        final requestRef = FirebaseFirestore.instance.collection('doctor_requests').doc(uid);
-        batch.set(requestRef, {
+        final requestData = {
           'doctorId': uid,
           'fullName': fullName,
           'email': email ?? '',
@@ -578,6 +576,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
           'photoURL': _photoURL ?? '',
           'documentUrls': licenseDocumentUrl == null ? <String>[] : <String>[licenseDocumentUrl],
           'status': 'pending',
+          'verificationStatus': 'pending',
+          'doctorRequestStatus': 'pending',
           'accountStatus': 'Pending',
           'rejectionReason': '',
           'reviewedAt': null,
@@ -589,10 +589,17 @@ class _RegisterScreenState extends State<RegisterScreen> {
           'yearsOfExperience': '0',
           'createdAt': FieldValue.serverTimestamp(),
           'updatedAt': FieldValue.serverTimestamp(),
-        }, SetOptions(merge: true));
-      }
+        };
 
-      await batch.commit();
+        try {
+          await FirebaseFirestore.instance
+              .collection('doctor_requests')
+              .doc(uid)
+              .set(requestData, SetOptions(merge: true));
+        } on FirebaseException catch (e) {
+          debugPrint('تعذر إنشاء مستند doctor_requests وسيتم عرض الطلب من users: ${e.code}');
+        }
+      }
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

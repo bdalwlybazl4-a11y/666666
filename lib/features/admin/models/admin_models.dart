@@ -128,7 +128,7 @@ class DoctorRequest {
     final data = doc.data() as Map<String, dynamic>;
     return DoctorRequest(
       id: doc.id,
-      doctorId: data['doctorId'] ?? '',
+      doctorId: data['doctorId'] ?? data['uid'] ?? doc.id,
       fullName: data['fullName'] ?? '',
       email: data['email'] ?? '',
       phoneNumber: data['phoneNumber'] ?? data['phone'] ?? '',
@@ -139,7 +139,7 @@ class DoctorRequest {
       clinicName: data['clinicName'] ?? '',
       clinicAddress: data['clinicAddress'] ?? '',
       documentUrls: List<String>.from(data['documentUrls'] ?? []),
-      status: _normalizeStatus(data['status'] ?? data['verificationStatus'] ?? data['accountStatus'] ?? 'pending'),
+      status: _normalizeStatus(data['status'] ?? data['verificationStatus'] ?? data['doctorRequestStatus'] ?? data['accountStatus'] ?? (data['isVerified'] == true ? 'approved' : 'pending')),
       rejectionReason: data['rejectionReason'] ?? '',
       createdAt: _timestampToDate(data['createdAt']),
       reviewedAt: data['reviewedAt'] != null
