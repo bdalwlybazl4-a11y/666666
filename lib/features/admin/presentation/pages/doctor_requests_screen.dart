@@ -12,19 +12,6 @@ class DoctorRequestsScreen extends StatefulWidget {
 
 class _DoctorRequestsScreenState extends State<DoctorRequestsScreen> {
   String _selectedFilter = 'pending';
-  late Future<List<DoctorRequest>> _requestsFuture;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadRequests();
-  }
-
-  void _loadRequests() {
-    _requestsFuture = _selectedFilter == 'all'
-        ? AdminService.getAllDoctorRequests()
-        : AdminService.getAllDoctorRequests(status: _selectedFilter);
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -34,8 +21,10 @@ class _DoctorRequestsScreenState extends State<DoctorRequestsScreen> {
         children: [
           _buildFilterBar(),
           Expanded(
-            child: FutureBuilder<List<DoctorRequest>>(
-              future: _requestsFuture,
+            child: StreamBuilder<List<DoctorRequest>>(
+              stream: AdminService.watchDoctorRequests(
+                status: _selectedFilter == 'all' ? null : _selectedFilter,
+              ),
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
                   return const Center(child: CircularProgressIndicator());
@@ -51,7 +40,7 @@ class _DoctorRequestsScreenState extends State<DoctorRequestsScreen> {
                         const Text('حدث خطأ في تحميل البيانات'),
                         const SizedBox(height: 16),
                         ElevatedButton.icon(
-                          onPressed: () => setState(_loadRequests),
+                          onPressed: () => setState(() {}),
                           icon: const Icon(Icons.refresh),
                           label: const Text('إعادة المحاولة'),
                         ),
@@ -67,10 +56,7 @@ class _DoctorRequestsScreenState extends State<DoctorRequestsScreen> {
                 }
 
                 return RefreshIndicator(
-                  onRefresh: () async {
-                    setState(_loadRequests);
-                    await _requestsFuture;
-                  },
+                  onRefresh: () async => setState(() {}),
                   child: ListView.builder(
                     padding: const EdgeInsets.fromLTRB(12, 4, 12, 16),
                     itemCount: requests.length,
@@ -126,7 +112,7 @@ class _DoctorRequestsScreenState extends State<DoctorRequestsScreen> {
       onSelected: (_) {
         setState(() {
           _selectedFilter = value;
-          _loadRequests();
+
         });
       },
       backgroundColor: Colors.white,
@@ -170,7 +156,7 @@ class _DoctorRequestsScreenState extends State<DoctorRequestsScreen> {
           );
 
           if (mounted) {
-            setState(_loadRequests);
+            setState(() {});
           }
         },
         child: Padding(
