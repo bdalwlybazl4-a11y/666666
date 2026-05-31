@@ -203,8 +203,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
       return downloadUrl;
     } catch (e) {
-      _handleError('profile-upload-error', e);
-      rethrow;
+      debugPrint('تعذر رفع الصورة الشخصية الاختيارية: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('تعذر رفع الصورة الشخصية الاختيارية، وسيتم إنشاء الحساب بدون صورة.')),
+        );
+      }
+      return null;
     } finally {
       if (mounted) {
         setState(() => _isProfileUploading = false);
@@ -463,7 +468,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   }) {
     final safeName = fileName.replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_');
     final timestamp = DateTime.now().millisecondsSinceEpoch;
-    return FirebaseStorage.instance.ref().child('doctor_verification/$userId/$folder/${timestamp}_$safeName');
+    return FirebaseStorage.instance.ref().child('$folder/$userId/${timestamp}_$safeName');
   }
 
   Future<UploadTask> _uploadPlatformFile(
@@ -495,6 +500,23 @@ class _RegisterScreenState extends State<RegisterScreen> {
         return 'image/png';
       default:
         return null;
+    }
+  }
+
+
+  Future<void> _saveProfileImageUrl(String userId, String photoUrl) async {
+    try {
+      final updates = {
+        'photoURL': photoUrl,
+        'profileImageUrl': photoUrl,
+        'updatedAt': FieldValue.serverTimestamp(),
+      };
+      await FirebaseFirestore.instance.collection('users').doc(userId).set(updates, SetOptions(merge: true));
+      if (_selectedAccountType == 'doctor') {
+        await FirebaseFirestore.instance.collection('doctor_requests').doc(userId).set(updates, SetOptions(merge: true));
+      }
+    } on FirebaseException catch (e) {
+      debugPrint('تعذر تحديث رابط الصورة الشخصية الاختيارية: ${e.code}');
     }
   }
 
@@ -743,8 +765,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
         password: _passwordController.text.trim(),
       );
 
-      if (_profileImage != null) {
-        _photoURL = await _uploadProfileImage(userCredential.user!.uid);
+      String? licenseDocumentUrl;
+      if (_selectedAccountType == 'doctor' && _licenseDocument != null) {
+        licenseDocumentUrl = await _uploadLicenseDocument(userCredential.user!.uid);
       }
 
       String? licenseDocumentUrl;
@@ -760,6 +783,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
         _emailController.text.trim(),
         licenseDocumentUrl: licenseDocumentUrl,
       );
+
+      if (_profileImage != null) {
+        final uploadedPhotoUrl = await _uploadProfileImage(userCredential.user!.uid);
+        if (uploadedPhotoUrl != null) {
+          _photoURL = uploadedPhotoUrl;
+          await _saveProfileImageUrl(userCredential.user!.uid, uploadedPhotoUrl);
+        }
+      }
 
       if (!mounted) return;
 
@@ -858,6 +889,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       ],
                     ),
                   ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'الصورة الشخصية اختيارية ويمكن تخطيها',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 12.5, color: Colors.grey[600]),
                 ),
                 const SizedBox(height: 16),
                 const Text(

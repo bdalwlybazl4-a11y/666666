@@ -141,6 +141,8 @@ class AdminService {
       /// تحديث حالة الطلب (آمن)
       batch.set(requestRef, {
         'status': 'approved',
+        'verificationStatus': 'approved',
+        'doctorRequestStatus': 'approved',
         'accountStatus': 'Approved',
         'reviewedAt': FieldValue.serverTimestamp(),
         'reviewedBy': adminId,
@@ -205,6 +207,8 @@ class AdminService {
       final batch = _firestore.batch();
       batch.set(requestRef, {
         'status': 'rejected',
+        'verificationStatus': 'rejected',
+        'doctorRequestStatus': 'rejected',
         'accountStatus': 'Rejected',
         'rejectionReason': rejectionReason,
         'reviewedAt': FieldValue.serverTimestamp(),
@@ -491,10 +495,10 @@ class AdminService {
 
 
   static String _doctorStatus(Map<String, dynamic> data) {
-    final rawStatus = (data['status'] ??
-            data['verificationStatus'] ??
+    final rawStatus = (data['verificationStatus'] ??
             data['doctorRequestStatus'] ??
             data['accountStatus'] ??
+            data['status'] ??
             (data['isVerified'] == true ? 'approved' : 'pending'))
         .toString()
         .trim()

@@ -139,7 +139,7 @@ class DoctorRequest {
       clinicName: data['clinicName'] ?? '',
       clinicAddress: data['clinicAddress'] ?? '',
       documentUrls: List<String>.from(data['documentUrls'] ?? []),
-      status: _normalizeStatus(data['status'] ?? data['verificationStatus'] ?? data['doctorRequestStatus'] ?? data['accountStatus'] ?? (data['isVerified'] == true ? 'approved' : 'pending')),
+      status: _normalizeStatus(data['verificationStatus'] ?? data['doctorRequestStatus'] ?? data['accountStatus'] ?? data['status'] ?? (data['isVerified'] == true ? 'approved' : 'pending')),
       rejectionReason: data['rejectionReason'] ?? '',
       createdAt: _timestampToDate(data['createdAt']),
       reviewedAt: data['reviewedAt'] != null
