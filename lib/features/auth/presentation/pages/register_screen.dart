@@ -728,6 +728,15 @@ class _RegisterScreenState extends State<RegisterScreen> {
     }
 
     if (_selectedAccountType == 'doctor') {
+      if (_profileImage == null && (_photoURL == null || _photoURL!.isEmpty)) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('يجب إضافة صورة شخصية للأطباء')),
+          );
+        }
+        return;
+      }
+
       if (_licenseDocument == null) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -755,6 +764,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
         email: _emailController.text.trim(),
         password: _passwordController.text.trim(),
       );
+
+      String? licenseDocumentUrl;
+      if (_selectedAccountType == 'doctor' && _licenseDocument != null) {
+        licenseDocumentUrl = await _uploadLicenseDocument(userCredential.user!.uid);
+      }
 
       String? licenseDocumentUrl;
       if (_selectedAccountType == 'doctor' && _licenseDocument != null) {
