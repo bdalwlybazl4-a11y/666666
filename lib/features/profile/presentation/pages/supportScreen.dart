@@ -53,8 +53,8 @@ class SupportScreen extends StatelessWidget {
             //   role: 'برمجة حاسوب',
             //   image: 'assets/images/doctor_placeholder.png',
             //   email: 's36181161@digl.com',
-            //   phone: '778447779',
-            //   whatsapp: '+967778447779',
+            //   phone: '777777777',
+            //   whatsapp: '+967777777777',
             // ),
             // const SizedBox(height: 20),
             //
